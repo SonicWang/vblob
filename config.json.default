@@ -15,6 +15,20 @@
                 "secret": "dummy"
             }
         }
+    },
+    {   "filter-1": {
+            "type": "filter",
+            "option": {
+                "type": "s3",
+                "option": {
+                   "key": "dummy",
+                   "secret": "dummy",
+                   "host": "localhost",
+                   "port": 9982,
+                   "throttle": false
+                }
+            }
+        }
     }
     ],
     "port": "9981",
