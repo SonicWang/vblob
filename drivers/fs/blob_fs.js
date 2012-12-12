@@ -15,16 +15,12 @@ var MAX_LIST_LENGTH = 1000; //max number of files to list
 var base64_char_table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 var TEMP_FOLDER = "~tmp";
 var GC_FOLDER = "~gc";
-var ENUM_FOLDER = "~enum";
 var MAX_COPY_RETRY = 3;
 var MAX_READ_RETRY = 3;
 var MAX_DEL_RETRY = 6;
 var gc_hash = {}; //for caching gc info;
 var gc_counter = 0; //counter for gc info
 var MAX_GC_QUEUE_LENGTH = 1600;
-var enum_cache = {};
-var enum_expire = {};
-var enum_queue = {};
 var prefix_cache = {}; //{bucket: { last_ts:ts, prefA: {last_ts:ts , prefB: {prefC ...}}...}
 var prefix_refresh_interval = 30000; //30 seconds
 
@@ -84,35 +80,6 @@ function error_msg(statusCode,code,msg,resp)
     "Message" : ( msg && msg.toString )? msg.toString() : ""
   }};
   //no additional info for now
-}
-
-function start_collector(option,fb)
-{
-  var node_exepath = option.node_exepath ? option.node_exepath : process.execPath;
-  var ec_exepath = option.ec_exepath ? option.ec_exepath : __dirname+"/fs_ec.js";
-  var ec_interval;
-  try { if (isNaN(ec_interval = parseInt(option.ec_interval,10))) throw 'isNaN'; } catch (err) { ec_interval = 300; }
-  fb.node_exepath = node_exepath;
-  fb.ec_exepath = ec_exepath;
-  fb.ec_interval = ec_interval;
-  var ec_status = 0;
-  fb.ecid = setInterval(function() {
-    if (ec_status === 1) return; //already a gc process running
-    ec_status = 1;
-    //node fs_ec.js <blob root> <global tmp>
-    exec(node_exepath + " " + ec_exepath + " " + fb.root_path + " --tmp " + fb.tmp_path + " > /dev/null",
-        function(error,stdout, stderr) {
-          ec_status = 0; //finished set to 0
-          if (error || stderr) {
-            var msg = 'enumeration collector error: ';
-            try {
-              msg += error?error:''+'-- '+stderr?stderr:'';
-            } catch (e) { }
-            fb.logger.warn(msg);
-          }
-        } );
-    }, ec_interval);
-
 }
 
 function start_gc(option,fb)
@@ -218,50 +185,12 @@ function start_gc(option,fb)
   },500);
 }
 
-function start_quota_gathering(fb)
-{
-  fs.readdir(fb.root_path, function(err, dirs) {
-    if (err) {
-      setTimeout(start_quota_gathering, 1000, fb);
-      return;
-    }
-    var evt = new events.EventEmitter();
-    var counter = dirs.length;
-    var sum = 0, sum2 = 0;
-    var used_quota = new Array(dirs.length);
-    var obj_count = new Array(dirs.length);
-    evt.on("Get Usage",function (dir_name, idx) {
-      fs.readFile(fb.root_path+"/"+dir_name+"/~enum/quota", function(err,data) {
-          if (err) { obj_count[idx] = null; used_quota[idx] = null; } else
-          { try { var obj = JSON.parse(data); obj_count[idx] = parseInt(obj.count,10); used_quota[idx] = parseInt(obj.storage,10); } catch (e) { obj_count[idx] = null; used_quota[idx] = null; } }
-          counter--; if (counter === 0) { evt.emit("Start Aggregate"); }
-      });
-    });
-    evt.on("Start Aggregate", function () {
-      for (var i = 0; i < dirs.length; i++) {
-        if (used_quota[i] === null)  { continue; }
-        sum += used_quota[i]; sum2 += obj_count[i];
-      }
-      fb.used_quota = sum; fb.obj_count = sum2;
-      //console.log('usage: ' + sum +' count: '+sum2);
-      setTimeout(start_quota_gathering,1000,fb);
-    });
-    if (dirs.length === 0) { evt.emit("Start Aggregate"); }
-    for (var i = 0; i < dirs.length; i++)
-    { evt.emit("Get Usage",dirs[i],i); }
-  });
-}
-
 function FS_blob(option,callback)  //fow now no encryption for fs
 {
   var this1 = this;
   this.root_path = option.root; //check if path exists here
   this.tmp_path = option.tmp_path ? option.tmp_path : "/tmp";
   this.logger = option.logger;
-  if (option.quota) { this.quota = parseInt(option.quota,10); this.used_quota = 0; }
-  else {this.quota = 100 * 1024 * 1024; this.used_quota=0;} //default 100MB
-  if (option.obj_limit) { this.obj_limit = parseInt(option.obj_limit, 10); this.obj_count = 0; }
-  else {this.obj_limit=10000; this.obj_count=0;} //default 10,000 objects
   if (!this1.root_path) {
     this1.root_path = './fs_root'; //default fs root
     try {
@@ -277,13 +206,6 @@ function FS_blob(option,callback)  //fow now no encryption for fs
   fs.stat(this1.root_path, function(err,stats) {
     if (!err) {
       start_gc(option,this1);
-      //set enumeration on by default
-      if (option.collector === undefined || option.collector === true) {
-        this.collector = true;
-        start_collector(option,this1);
-        //as long as enumeration is on, quotas is enabled as well
-        setTimeout(start_quota_gathering, 1000, this1);
-      }
     } else { this1.logger.error( ('root folder in fs driver is not mounted')); }
     if (callback) { callback(this1,err); }
   });
@@ -320,11 +242,6 @@ FS_blob.prototype.container_create = function(container_name,callback,fb)
       {
         fs.mkdirSync(c_path+"/"+GC_FOLDER,"0775");
       }
-      if (Path.existsSync(c_path+"/"+ENUM_FOLDER) === false)
-      {
-        fs.mkdirSync(c_path+"/"+ENUM_FOLDER,"0775");
-      }
-      fs.writeFileSync(c_path+"/"+ENUM_FOLDER+"/base", "{}");
       if (Path.existsSync(c_path+"/ts") === false) //double check ts
       {
         fb.logger.debug( ("timestamp "+c_path+"/ts does not exist. Need to create one"));
@@ -540,12 +457,6 @@ FS_blob.prototype.file_create = function (container_name,filename,create_options
 //step 1 check container existence
   var c_path = this.root_path + "/" + container_name;
   if (container_exists(container_name,callback,fb) === false) return;
-  //QUOTA
-  if (this.quota && this.used_quota + parseInt(create_meta_data["content-length"],10) > this.quota || this.obj_limit && this.obj_count >= this.obj_limit) {
-    error_msg(500,"UsageExceeded","Usage will exceed the quota",resp);
-    callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-    return;
-  }
 //step2.1 calc unique hash for key
   var key_fingerprint = get_key_fingerprint(filename);
 //step2.2 gen unique version id
@@ -862,15 +773,6 @@ FS_blob.prototype.file_copy = function (container_name,filename,source_container
       return;
     }
     var obj = JSON.parse(data);
-    //QUOTA
-    if (source_container !== container_name || source_file !== filename) {
-      if (fb.quota && fb.used_quota + obj.vblob_file_size > fb.quota ||
-          fb.obj_limit && fb.obj_count >= fb.obj_limit) {
-        error_msg(500,"UsageExceeded","Usage will exceed quota",resp);
-        callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-        return;
-      }
-    }
     if (true) {
       //check etag, last modified
       var check_modified = true;
@@ -1103,141 +1005,6 @@ FS_blob.prototype.file_read = function (container_name, filename, options, callb
   });
 };
 
-function query_files(container_name, options, callback, fb)
-{
-  var keys = null;
-  keys = enum_cache[container_name].keys;
-  if (!keys) {
-    fb.logger.debug("sorting the file keys in container " + container_name);
-    keys = Object.keys(enum_cache[container_name].tbl);
-    keys = keys.sort();
-    enum_cache[container_name].keys = keys;
-  }
-  var idx = 0;
-  var low = 0, high = keys.length-1, mid;
-  if (options.marker || options.prefix) {
-    var st = options.marker;
-    if (!st || st < options.prefix) st = options.prefix;
-    while (low <= high) {
-      mid = ((low + high) >> 1);
-      if (keys[mid] === st) { low = mid; break; } else
-      if (keys[mid] < st) low = mid + 1;
-      else high = mid-1;
-    }
-    idx = low;
-  }
-  var idx2 = keys.length;
-  if (options.prefix) { //end of prefix range
-    var st2 = options.prefix;
-    st2 = st2.substr(0,st2.length-1)+String.fromCharCode(st2.charCodeAt(st2.length-1)+1);
-    low = idx; high = keys.length-1;
-    while (low <= high) {
-      mid = ((low + high) >> 1);
-      if (keys[mid] === st2) { low = mid; break; } else
-      if (keys[mid] < st2) low = mid + 1;
-      else high = mid-1;
-    }
-    idx2 = low;
-  }
-  var limit1;
-  try { limit1 = options["max-keys"] ? parseInt(options["max-keys"],10) : 1000; } catch (err) { limit1 = 1000; }
-  var limit = limit1;
-  if (limit > 1000) limit = 1000;
-  var res_json = {};
-  var res_contents = [];
-  var res_common_prefixes = [];
-  res_json["Name"] = container_name;
-  res_json["Prefix"] = options.prefix ? options.prefix : {};
-  res_json["Marker"] = options.marker ? options.marker : {};
-  res_json["MaxKeys"] = ""+limit;
-  if (options.delimiter) {
-    res_json["Delimiter"] = options.delimiter;
-  }
-  var last_pref = null;
-  for (var i = 0; i < limit && idx < idx2; ) {
-    var key = keys[idx];
-    idx++;
-    if (options.delimiter) {
-      var start = 0;
-      if (options.prefix) start = options.prefix.length;
-      var pos = key.indexOf(options.delimiter,start);
-      if (pos >= 0) { //grouping together [prefix] .. delimiter
-        var pref = key.substring(0, pos+1);
-        if (pref === last_pref) continue;
-        last_pref = pref;
-        res_common_prefixes.push({"Prefix":pref});
-        i++; continue;
-      }
-    }
-    i++;
-    var doc = enum_cache[container_name].tbl[key];
-    res_contents.push({"Key":key, "LastModified":new Date(doc.lastmodified).toISOString(), "ETag":'"'+doc.etag+'"', "Size":doc.size, "Owner":{}, "StorageClass":"STANDARD"});
-  }
-  if (i >= limit && idx < idx2 && limit <= limit1) res_json["IsTruncated"] = 'true';
-  else res_json["IsTruncated"] = 'false';
-  if (res_contents.length > 0) res_json["Contents"] =  res_contents; //files
-  if (res_common_prefixes.length > 0) res_json["CommonPrefixes"] = res_common_prefixes; //folders
-  var resp = {};
-  resp.resp_code = 200; resp.resp_header = common_header(); resp.resp_body = {"ListBucketResult":res_json};
-  res_json = null; res_contents = null; keys = null; res_common_prefixes = null;
-  callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-}
-
-FS_blob.prototype.file_list = function(container_name, options, callback, fb)
-{
-  if (options.delimiter && options.delimiter.length > 1) {
-    var resp = {};
-    error_msg(400,"InvalidArgument","Delimiter should be a single character",resp);
-    callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-    return;
-  }
-  var c_path = this.root_path + "/" + container_name;
-  if (container_exists(container_name,callback,this) === false) return;
-  var now = new Date().valueOf();
-  if (!enum_cache[container_name] || !enum_expire[container_name] || enum_expire[container_name] < now) {
-    if (!enum_queue[container_name]) enum_queue[container_name]={state:'READY',queue:[]};
-    if (enum_queue[container_name].state == 'INPROGRESS') {
-      enum_queue[container_name].queue.push({cn:container_name, op:options, cb:callback}); //defer
-      return;
-    }
-    enum_queue[container_name].state='INPROGRESS';
-    var enum_raw = '{}';
-    try {
-      enum_raw = fs.readFileSync(fb.root_path+"/"+container_name+"/"+ENUM_FOLDER+"/base");
-    } catch (e) {}
-    zlib.unzip(enum_raw,function(err,buffer) {
-      enum_raw = null;
-      try {
-        if (err) throw err;
-        enum_queue[container_name].state='READY';
-        enum_cache[container_name] = null;
-	enum_cache[container_name] = {tbl:JSON.parse(buffer)};
-	enum_expire[container_name] = now + 1000 * 30;
-	query_files(container_name, options,callback,fb);
-        for (var idx=0; idx < enum_queue[container_name].queue.length; idx++) {
-          process.nextTick(function () {
-            if (enum_queue[container_name].queue.length > 0) {
-              var obj=enum_queue[container_name].queue.shift();
-              try {
-                query_files(obj.cn,obj.op,obj.cb,fb);
-              } catch (e) {
-	        var resp = {};
-	        error_msg(500,'InternalError',e,resp);
-	        callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-              }
-            }
-          });
-        }
-      } catch (e) {
-	var resp = {};
-	error_msg(500,'InternalError',e,resp);
-	callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
-      }
-      buffer = null;
-    }); // end of unzip
-  } else query_files(container_name, options,callback,fb);
-}
-
 FS_blob.prototype.container_list = function()
 {
   return  fs.readdirSync(this.root_path);
@@ -1302,7 +1069,9 @@ FS_Driver.prototype.container_list = function (callback) {
 
 FS_Driver.prototype.file_list = function(container_name,option,callback) {
   if (check_client(this.client,callback) === false) return;
-  this.client.file_list(container_name,option, callback, this.client);
+  var resp = {};
+  error_msg(400,"NotImplemented","This operation is supported",resp); //same as S3 does
+  callback(resp.resp_code, resp.resp_header, resp.resp_body, null);
 };
 
 FS_Driver.prototype.file_read = function(container_name,file_key,options,callback){
@@ -1364,8 +1133,6 @@ FS_Driver.prototype.get_config = function() {
   obj2.ec_exepath = this.client.ec_exepath;
   obj2.ec_interval = this.client.ec_interval;
   obj2.collector = this.client.collector;
-  obj2.quota = this.client.quota;
-  obj2.obj_limit = this.client.obj_limit;
   obj.option = obj2;
   return obj;
 };

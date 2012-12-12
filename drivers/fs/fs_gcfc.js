@@ -29,27 +29,6 @@ buck.on('gc',function(buck_idx) {
   try {
     var trashes = Object.keys(gc_hash[containers[buck_idx]]); //second level key: file fingerprint
     var trash_dir = root_path + "/" + containers[buck_idx] + "/~gc";
-    var enum_dir = root_path + "/" + containers[buck_idx] + "/~enum";
-    fs.mkdir(enum_dir,"0775", function(err) {} );
-    var enum_delta = {};
-
-    for (var j = 0; j < trashes.length; j++)
-      enum_delta[gc_hash[containers[buck_idx]][trashes[j]].fn] = 1;
-    //WRITE ENUM DELTA
-    var enum_delta_file = enum_dir + "/delta-"+new Date().valueOf()+"-"+Math.floor(Math.random()*10000)+"-"+Math.floor(Math.random()*10000);
-    var sync_cnt = 0;
-    var failed_cnt = 0;
-    while (sync_cnt < MAX_TRIES) {
-      try { fs.writeFileSync(enum_delta_file, JSON.stringify(enum_delta)); } catch (e) {failed_cnt++;}
-      sync_cnt++;
-      if (failed_cnt < sync_cnt) break;
-    }
-    if (failed_cnt >= sync_cnt) {
-      //can't proceed
-      return;
-    }
-    enum_delta = null;
-
     var evt = new events.EventEmitter();
     evt.Container = containers[i];
     evt.Batch = BATCH_NUM; evt.Counter = 0;

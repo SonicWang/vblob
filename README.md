@@ -14,7 +14,6 @@ The blob service provides an S3-compatible HTTP endpoint to an underlying storag
 - streaming in/out blobs
 - basic blob operations: create/delete/get/copy
 - create/list/delete buckets
-- enumerate objects with prefix/delimiter/marker/max-keys
 - user defined meta data
 
 ## FS driver
@@ -78,18 +77,13 @@ NOTE: if no config.json file is found, the gateway will use the settings from `c
                 "option": {
                     "root": "<pathname for storing blobs - default is `./fs_root` >",
                     "node_exepath": "<path to node executable - default is `node` >",
-                    "collector" : <enable gc and enumeration - default is `true`, NOTE: must be limited to one instance >,
                     "tmp_path" : "<path to a global tmp folder for storing runtime temp files, default is `/tmp` >",
                     "gc_exepath": "<path to gc js file, default is `drivers/fs/fs_gc.js` >",
                     "gc_interval": <ms per gc execution, default is `600,000` (10 min) >,
                     "gcfc_exepath": "<path to lightweight gc js file, default is `drivers/fs/fs_gcfc.js` >",
                     "gcfc_interval": <ms per lightweiht gc execution, default is `1,500` (1.5 sec) >,
                     "gctmp_exepath": "<path to tmp folder gc js file, default is `drivers/fs/fs_gctmp.js` >",
-                    "gctmp_interval": <ms per tmp folder gc execution, default is 3,600,000 (1 hr) >,
-                    "ec_exepath": "<path to ec js file, default is `drivers/fs/fs_ec.js` >",
-                    "ec_interval": <ms per ec execution, default is `1,500` (1.5 sec) >,
-                    "quota": <maximum number of bytes allowed to store, default is 100MB >,
-                    "obj_limit" : <maximum number of blobs allowed to store, default is 10,000 >
+                    "gctmp_interval": <ms per tmp folder gc execution, default is 3,600,000 (1 hr) >
                 }
             }
         },
@@ -148,16 +142,6 @@ The following curl commands assume:
 ### Listing all buckets
 
     curl http://localhost:9981 -v
-
-### Listing objects in a bucket
-  
-    curl http://localhost:9981/container1 -v
-
-Four parameters are supported: prefix; delimiter; marker; max-keys. E.g.:
-
-    curl "http://localhost:9981/container1/?prefix=A/&delimiter=/" -v
-
-The above query will list virtual folders in 'container1' starting with 'A/' and using delimiter '/'.
 
 ### Create a bucket
 

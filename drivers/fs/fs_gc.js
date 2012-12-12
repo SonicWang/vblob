@@ -44,18 +44,6 @@ buck.on('gc',function(buck_idx) {
   try {
     var trashes = fs.readdirSync(root_path + "/" + containers[buck_idx] + "/~gc");
     var trash_dir = root_path + "/" + containers[buck_idx] + "/~gc";
-    var enum_delta = {};
-    for (var nIdx1=0; nIdx1<trashes.length; nIdx1++) {
-      var fileversion = trashes[nIdx1];
-      fileversion = fileversion.substr(0,fileversion.lastIndexOf('-'));  //remove rand2
-      fileversion = fileversion.substr(0,fileversion.lastIndexOf('-')); //remove rand1
-      fileversion = fileversion.substr(0,fileversion.lastIndexOf('-')); //remove ts
-      enum_delta[fileversion] = 0;
-    }
-    var enum_dir = root_path + "/" + containers[buck_idx] + "/~enum";
-    var enum_delta_file = enum_dir + "/delta-"+new Date().valueOf()+"-"+Math.floor(Math.random()*10000)+"-"+Math.floor(Math.random()*10000);
-    fs.writeFileSync(enum_delta_file, JSON.stringify(enum_delta));
-
     var evt = new events.EventEmitter();
     evt.Container = containers[buck_idx];
     evt.Batch = BATCH_NUM; evt.Counter = 0;
@@ -129,10 +117,6 @@ buck.on('gc',function(buck_idx) {
       if (evt.Counter + BATCH_NUM > trashes.length) evt.Batch = trashes.length - evt.Counter;
       for (var i = evt.Counter; i < trashes.length && i < evt.Counter + BATCH_NUM; i++) {
         evt.emit('next', i);
-      }
-      if (evt.Counter >= trashes.length) {
-        enum_delta_file = enum_dir + "/delta-"+new Date().valueOf()+"-"+Math.floor(Math.random()*10000)+"-"+Math.floor(Math.random()*10000);
-        fs.writeFileSync(enum_delta_file, JSON.stringify(enum_delta));
       }
     });
     evt.emit('nextbatch');
