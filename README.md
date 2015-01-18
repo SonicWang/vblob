@@ -193,6 +193,7 @@ Standard `range` headers are supported for single range reads. E.g.
     curl http://localhost:9981/container1/file1.txt -H "range:bytes=123-892" -v
 
 
+
 ## Using s3-curl with gateway authentication
 
 Instead of using curl with authentication disabled, the gateway can also be accessed in an authenticated fashion via s3-curl.pl which is a utility for making signed requests to s3 available on [aws](http://aws.amazon.com/code/128). 
